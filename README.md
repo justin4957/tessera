@@ -2,6 +2,12 @@
 
 **Temporal Data Sovereignty with Pluggable Storage Backends**
 
+<p align="center">
+  <img src="https://media2.giphy.com/media/ckebyFUgKNQMYP7Q8S/giphy.gif" alt="Time flows" width="200"/>
+  &nbsp;&nbsp;&nbsp;
+  <img src="https://media3.giphy.com/media/077i6AULCXc0FKTj9s/giphy.gif" alt="Data Security" width="200"/>
+</p>
+
 Tessera is an Elixir implementation exploring the Ephemeral Consensus Pods (ECP) architecture - enabling control over *when* data is accessible, not merely *to whom*.
 
 ## Vision
@@ -75,7 +81,7 @@ lib/tessera/
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/tessera.git
+git clone https://github.com/justin4957/tessera.git
 cd tessera
 
 # Install dependencies
@@ -88,12 +94,37 @@ mix test
 iex -S mix
 ```
 
+## Example Usage
+
+```elixir
+# Create a temporal grant
+alias Tessera.Core.{Grants.Grant, Rights.TemporalInterval}
+
+# Grant read access for 30 days
+grant = Grant.new(
+  grantee_id: "did:web:alice.example",
+  resource_id: "data/medical/records",
+  interval: TemporalInterval.for_duration(30, :day),
+  scope: [:read],
+  purpose: "insurance_claim_2024"
+)
+
+# Check if grant is currently active
+Grant.active?(grant)  # => true
+
+# Revoke forward access (historical access remains provable)
+{:ok, revoked_grant} = Grant.revoke(grant)
+
+# Freeze for immutable audit snapshot
+{:ok, frozen_grant} = Grant.freeze(grant)
+```
+
 ## Roadmap
 
 ### Phase 1: Core Data Layer (Current)
-- [ ] Store behaviour and memory adapter
-- [ ] Basic temporal rights algebra
-- [ ] Grant/revoke primitives
+- [x] Store behaviour and memory adapter
+- [x] Basic temporal rights algebra
+- [x] Grant/revoke primitives
 
 ### Phase 2: Real Storage Backends
 - [ ] Solid Pod integration
@@ -107,6 +138,10 @@ iex -S mix
 ### Phase 4: Attestation Layer
 - [ ] ZK participation proofs
 - [ ] Blockchain attestation integration
+
+## Documentation
+
+See the [ECP Implementation Roadmap](docs/ECP_Implementation_Roadmap.docx) for the full architectural vision.
 
 ## Inspiration
 
