@@ -14,4 +14,19 @@ defmodule Tessera.HTTPClient do
   def post(url, opts \\ []) do
     Req.post(url, opts)
   end
+
+  @impl true
+  def put(url, opts \\ []) do
+    Req.put(url, opts)
+  end
+
+  @impl true
+  def delete(url, opts \\ []) do
+    Req.delete(url, opts)
+  end
+
+  @impl true
+  def head(url, opts \\ []) do
+    Req.head(url, opts)
+  end
 end

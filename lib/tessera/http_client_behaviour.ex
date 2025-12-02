@@ -3,9 +3,12 @@ defmodule Tessera.HTTPClientBehaviour do
   Behaviour for HTTP clients, allowing for mocking in tests.
   """
 
-  @type response :: %{status: integer(), body: term()}
+  @type response :: %{status: integer(), body: term(), headers: list()}
   @type error :: {:error, term()}
 
   @callback get(url :: String.t(), opts :: keyword()) :: {:ok, response()} | error()
   @callback post(url :: String.t(), opts :: keyword()) :: {:ok, response()} | error()
+  @callback put(url :: String.t(), opts :: keyword()) :: {:ok, response()} | error()
+  @callback delete(url :: String.t(), opts :: keyword()) :: {:ok, response()} | error()
+  @callback head(url :: String.t(), opts :: keyword()) :: {:ok, response()} | error()
 end
