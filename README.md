@@ -94,6 +94,47 @@ mix test
 iex -S mix
 ```
 
+## Storage Backend Quick Start
+
+Tessera supports multiple storage backends. See [Storage Backends Guide](docs/STORAGE_BACKENDS.md) for full documentation.
+
+### Memory (Development/Testing)
+
+```elixir
+{:ok, _} = Tessera.Stores.Memory.Adapter.start_link(name: :store)
+
+:ok = Tessera.Stores.Memory.Adapter.put("my-key", %{data: "value"}, %{}, :store)
+{:ok, data, _meta} = Tessera.Stores.Memory.Adapter.get("my-key", :store)
+```
+
+### ATProto (Bluesky PDS)
+
+```elixir
+{:ok, _} = Tessera.Stores.ATProto.Adapter.start_link(
+  name: :atproto,
+  pds_url: "https://bsky.social",
+  identifier: "your-handle.bsky.social",
+  password: "your-app-password",
+  collection: "app.tessera.record"
+)
+
+:ok = Tessera.Stores.ATProto.Adapter.put("doc-1", %{title: "Hello"}, %{}, :atproto)
+{:ok, data, _meta} = Tessera.Stores.ATProto.Adapter.get("doc-1", :atproto)
+```
+
+### Solid Pod
+
+```elixir
+{:ok, _} = Tessera.Stores.Solid.Adapter.start_link(
+  name: :solid,
+  pod_url: "https://storage.inrupt.com/your-pod-id/",
+  credentials: %{id: "client-id", secret: "client-secret"}
+)
+
+:ok = Tessera.Stores.Solid.Adapter.put("docs/report", %{year: 2024}, %{}, :solid)
+{:ok, data, _meta} = Tessera.Stores.Solid.Adapter.get("docs/report", :solid)
+```
+
 ## Example Usage
 
 ```elixir
@@ -121,27 +162,28 @@ Grant.active?(grant)  # => true
 
 ## Roadmap
 
-### Phase 1: Core Data Layer (Current)
+### Phase 1: Core Data Layer
 - [x] Store behaviour and memory adapter
 - [x] Basic temporal rights algebra
 - [x] Grant/revoke primitives
 
-### Phase 2: Real Storage Backends
-- [ ] Solid Pod integration
-- [ ] ATProto PDS integration
+### Phase 2: Real Storage Backends (Current)
+- [x] ATProto PDS integration ([#1](https://github.com/justin4957/tessera/issues/1))
+- [x] Solid Pod integration ([#2](https://github.com/justin4957/tessera/issues/2))
 
 ### Phase 3: Cryptographic Foundations
-- [ ] Hierarchical key derivation
-- [ ] Epoch-based key rotation
-- [ ] Time-lock encryption primitives
+- [ ] Hierarchical key derivation ([#8](https://github.com/justin4957/tessera/issues/8))
+- [ ] Epoch-based key rotation ([#9](https://github.com/justin4957/tessera/issues/9))
+- [ ] Time-lock encryption primitives ([#10](https://github.com/justin4957/tessera/issues/10))
 
-### Phase 4: Attestation Layer
-- [ ] ZK participation proofs
-- [ ] Blockchain attestation integration
+### Phase 4: Distributed Consensus
+- [ ] ZK participation proofs ([#11](https://github.com/justin4957/tessera/issues/11))
+- [ ] Blockchain attestation integration ([#12](https://github.com/justin4957/tessera/issues/12))
 
 ## Documentation
 
-See the [ECP Implementation Roadmap](docs/ECP_Implementation_Roadmap.docx) for the full architectural vision.
+- [Storage Backends Guide](docs/STORAGE_BACKENDS.md) - Configuration and usage for all storage adapters
+- [ECP Implementation Roadmap](docs/ECP_Implementation_Roadmap.docx) - Full architectural vision
 
 ## Inspiration
 
