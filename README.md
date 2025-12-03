@@ -98,6 +98,8 @@ iex -S mix
 
 Tessera supports multiple storage backends. See [Storage Backends Guide](docs/STORAGE_BACKENDS.md) for full documentation.
 
+![](https://media0.giphy.com/media/v1.Y2lkPTc5MGI3NjExanplcXVha2c3NTg1djB0ZXI0bjR2aTY5YXB6MG91MzVodXluOG9jNCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/pywBt1W3SlN7O/giphy.gif)
+
 ### Memory (Development/Testing)
 
 ```elixir
