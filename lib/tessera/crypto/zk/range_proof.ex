@@ -13,8 +13,16 @@ defmodule Tessera.Crypto.ZK.RangeProof do
   3. Prove the bit-composition equals (value - min)
   4. Verify (value - min) < (max - min + 1)
 
-  For production systems requiring constant-size proofs, consider
-  integrating Bulletproofs via a NIF.
+  ## Security Notes
+
+  This implementation uses domain-separated Fiat-Shamir challenges.
+  For production systems requiring constant-size proofs and formal
+  security proofs, consider integrating Bulletproofs via a NIF.
+
+  ## Limitations
+
+  - Proof size grows linearly with log2(range_size)
+  - Not suitable for very large ranges (>2^64)
   """
 
   alias Tessera.Crypto.ZK.Commitment
@@ -31,8 +39,12 @@ defmodule Tessera.Crypto.ZK.RangeProof do
           created_at: DateTime.t()
         }
 
+  # Cryptographic constants
   @hash_algorithm :sha256
   @max_bits 64
+
+  # Domain separation for Fiat-Shamir challenge
+  @domain_proof "Tessera.ZK.RangeProof.v1"
 
   @doc """
   Generates a range proof.
@@ -80,11 +92,16 @@ defmodule Tessera.Crypto.ZK.RangeProof do
           hash(<<bit::8>> <> bit_blinding)
         end)
 
-      # Create challenge via Fiat-Shamir
+      # Create challenge via Fiat-Shamir with domain separation
       challenge_input =
-        commitment.commitment_hash <>
-          Enum.join(bit_commitments) <>
+        IO.iodata_to_binary([
+          @domain_proof,
+          <<byte_size(commitment.commitment_hash)::32>>,
+          commitment.commitment_hash,
+          <<length(bit_commitments)::32>>,
+          bit_commitments,
           <<min::64, max::64>>
+        ])
 
       challenge = hash(challenge_input)
 
@@ -132,11 +149,16 @@ defmodule Tessera.Crypto.ZK.RangeProof do
       if length(proof.bit_commitments) != num_bits do
         {:error, :invalid_bit_count}
       else
-        # Recompute expected challenge
+        # Recompute expected challenge with domain separation
         expected_challenge_input =
-          commitment.commitment_hash <>
-            Enum.join(proof.bit_commitments) <>
+          IO.iodata_to_binary([
+            @domain_proof,
+            <<byte_size(commitment.commitment_hash)::32>>,
+            commitment.commitment_hash,
+            <<length(proof.bit_commitments)::32>>,
+            proof.bit_commitments,
             <<min::64, max::64>>
+          ])
 
         expected_challenge = hash(expected_challenge_input)
 

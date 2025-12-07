@@ -1,14 +1,22 @@
 defmodule Tessera.Crypto.ZK.Commitment do
   @moduledoc """
-  Pedersen-style commitments using SHA-256.
+  Hash-based commitments using SHA-256 with domain separation.
 
-  A commitment binds a prover to a value without revealing it. Later,
-  the prover can open the commitment to prove they knew the value.
-
-  ## Properties
+  This module implements a hash-based commitment scheme (not a true Pedersen
+  commitment, which requires elliptic curve operations). The scheme provides:
 
   - **Hiding**: The commitment reveals nothing about the committed value
-  - **Binding**: Cannot open the commitment to a different value
+  - **Binding**: Computationally infeasible to open to a different value
+
+  ## Security Notes
+
+  This implementation uses SHA-256 hash-based commitments with:
+  - Domain separation tags to prevent cross-protocol attacks
+  - Length-prefixed encoding to prevent concatenation collisions
+  - Cryptographically secure random blinding factors
+
+  For applications requiring homomorphic properties or formal ZK guarantees,
+  consider using elliptic curve-based Pedersen commitments (e.g., via libsecp256k1).
 
   ## Structure
 
@@ -29,14 +37,23 @@ defmodule Tessera.Crypto.ZK.Commitment do
           created_at: DateTime.t()
         }
 
+  # Cryptographic constants
   @blinding_factor_size 32
   @hash_algorithm :sha256
+
+  # Domain separation tags for different commitment types
+  @domain_participation "Tessera.ZK.Commitment.Participation.v1"
+  @domain_value "Tessera.ZK.Commitment.Value.v1"
+  @domain_membership "Tessera.ZK.Commitment.Membership.v1"
 
   @doc """
   Creates a participation commitment.
 
   Commits to participation in a pod at a specific time without revealing
   the actual contribution.
+
+  Uses domain separation and length-prefixed encoding to prevent
+  cross-protocol and concatenation attacks.
   """
   @spec create_participation(String.t(), DateTime.t(), binary()) ::
           {:ok, t(), binary()} | {:error, term()}
@@ -46,20 +63,22 @@ defmodule Tessera.Crypto.ZK.Commitment do
 
     # Hash the contribution (value we're hiding)
     value_hash = hash(contribution)
+    timestamp_unix = DateTime.to_unix(timestamp)
 
     # Public data that will be visible
     public_data = %{
       pod_id: pod_id,
       timestamp: DateTime.to_iso8601(timestamp),
-      timestamp_unix: DateTime.to_unix(timestamp)
+      timestamp_unix: timestamp_unix
     }
 
-    # Create the commitment: H(pod_id || timestamp || value_hash || blinding_factor)
+    # Create the commitment with domain separation and length-prefixed encoding:
+    # H(domain || len(pod_id) || pod_id || timestamp || value_hash || blinding_factor)
     commitment_input =
-      pod_id <>
-        Integer.to_string(DateTime.to_unix(timestamp)) <>
-        value_hash <>
-        blinding_factor
+      encode_commitment_input(
+        @domain_participation,
+        [pod_id, <<timestamp_unix::64>>, value_hash, blinding_factor]
+      )
 
     commitment_hash = hash(commitment_input)
 
@@ -81,6 +100,7 @@ defmodule Tessera.Crypto.ZK.Commitment do
   Creates a value commitment for range proofs.
 
   Commits to an integer value that can later be proven to be within a range.
+  Uses domain separation and length-prefixed encoding.
   """
   @spec create_value(integer(), keyword()) :: {:ok, t(), binary()} | {:error, term()}
   def create_value(value, opts \\ []) when is_integer(value) do
@@ -96,8 +116,13 @@ defmodule Tessera.Crypto.ZK.Commitment do
       max: Keyword.get(opts, :max)
     }
 
-    # Commitment: H(value || blinding_factor)
-    commitment_input = value_binary <> blinding_factor
+    # Commitment with domain separation: H(domain || len(value) || value || blinding_factor)
+    commitment_input =
+      encode_commitment_input(
+        @domain_value,
+        [value_binary, blinding_factor]
+      )
+
     commitment_hash = hash(commitment_input)
 
     secret = encode_secret(value_binary, blinding_factor)
@@ -117,6 +142,7 @@ defmodule Tessera.Crypto.ZK.Commitment do
   Creates a membership commitment.
 
   Commits to being a member of a set without revealing which member.
+  Uses domain separation and length-prefixed encoding.
   """
   @spec create_membership(term(), [term()]) :: {:ok, t(), binary()} | {:error, term()}
   def create_membership(element, set) when is_list(set) do
@@ -137,8 +163,14 @@ defmodule Tessera.Crypto.ZK.Commitment do
         set_size: length(set)
       }
 
-      # Commitment: H(element || set_root || blinding_factor)
-      commitment_input = element_binary <> set_root <> blinding_factor
+      # Commitment with domain separation:
+      # H(domain || len(element) || element || set_root || blinding_factor)
+      commitment_input =
+        encode_commitment_input(
+          @domain_membership,
+          [element_binary, set_root, blinding_factor]
+        )
+
       commitment_hash = hash(commitment_input)
 
       secret = encode_secret(element_binary, blinding_factor)
@@ -247,6 +279,17 @@ defmodule Tessera.Crypto.ZK.Commitment do
 
   defp hash(data), do: :crypto.hash(@hash_algorithm, data)
 
+  # Encodes commitment input with domain separation and length-prefixed fields
+  # to prevent concatenation collision attacks (e.g., "ab" <> "cd" vs "a" <> "bcd")
+  defp encode_commitment_input(domain, fields) when is_binary(domain) and is_list(fields) do
+    encoded_fields = Enum.map(fields, &encode_length_prefixed/1)
+    IO.iodata_to_binary([domain | encoded_fields])
+  end
+
+  defp encode_length_prefixed(data) when is_binary(data) do
+    <<byte_size(data)::32, data::binary>>
+  end
+
   defp encode_secret(value_binary, blinding_factor) do
     value_size = byte_size(value_binary)
     <<value_size::32, value_binary::binary, blinding_factor::binary>>
@@ -273,16 +316,21 @@ defmodule Tessera.Crypto.ZK.Commitment do
     value_hash = hash(value_binary)
 
     commitment_input =
-      pd.pod_id <>
-        Integer.to_string(pd.timestamp_unix) <>
-        value_hash <>
-        blinding_factor
+      encode_commitment_input(
+        @domain_participation,
+        [pd.pod_id, <<pd.timestamp_unix::64>>, value_hash, blinding_factor]
+      )
 
     hash(commitment_input)
   end
 
   defp recompute_commitment(%{type: :value}, value_binary, blinding_factor) do
-    commitment_input = value_binary <> blinding_factor
+    commitment_input =
+      encode_commitment_input(
+        @domain_value,
+        [value_binary, blinding_factor]
+      )
+
     hash(commitment_input)
   end
 
@@ -292,7 +340,13 @@ defmodule Tessera.Crypto.ZK.Commitment do
          blinding_factor
        ) do
     {:ok, set_root} = Base.decode16(pd.set_root, case: :lower)
-    commitment_input = element_binary <> set_root <> blinding_factor
+
+    commitment_input =
+      encode_commitment_input(
+        @domain_membership,
+        [element_binary, set_root, blinding_factor]
+      )
+
     hash(commitment_input)
   end
 

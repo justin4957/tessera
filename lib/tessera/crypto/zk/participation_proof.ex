@@ -8,14 +8,22 @@ defmodule Tessera.Crypto.ZK.ParticipationProof do
 
   ## Protocol Overview
 
-  1. **Commit**: Prover creates commitment `C = H(pod_id || timestamp || H(data) || r)`
-  2. **Prove**: Prover creates proof by signing the commitment with the secret
+  1. **Commit**: Prover creates commitment with domain separation
+  2. **Prove**: Prover creates proof using Fiat-Shamir with domain-separated challenge
   3. **Verify**: Verifier checks the proof without learning the secret
 
   ## Security Properties
 
   - **Soundness**: Without the secret, cannot create valid proofs
   - **Zero-Knowledge**: Proofs reveal nothing about the contribution
+  - **Domain Separation**: Prevents cross-protocol attacks via unique domain tags
+
+  ## Aggregation Limitations
+
+  The `aggregate/1` function provides a convenience wrapper that stores
+  individual proofs for batch verification. It does NOT provide cryptographic
+  proof aggregation (which would require more sophisticated techniques like
+  Bulletproofs or recursive SNARKs). Each proof is verified individually.
   """
 
   alias Tessera.Crypto.ZK.Commitment
@@ -31,7 +39,12 @@ defmodule Tessera.Crypto.ZK.ParticipationProof do
           aggregated: [t()] | nil
         }
 
+  # Cryptographic constants
   @hash_algorithm :sha256
+  @nonce_size 32
+
+  # Domain separation for Fiat-Shamir challenge
+  @domain_proof "Tessera.ZK.ParticipationProof.v1"
 
   @doc """
   Generates a participation proof.
@@ -54,11 +67,25 @@ defmodule Tessera.Crypto.ZK.ParticipationProof do
 
   defp do_generate(commitment, secret) do
     # Generate a random nonce for this proof
-    nonce = :crypto.strong_rand_bytes(32)
+    nonce = :crypto.strong_rand_bytes(@nonce_size)
 
-    # Create proof hash: H(commitment_hash || secret || nonce)
+    # Create proof hash with domain separation:
+    # H(domain || commitment_hash || secret || nonce || pod_id || timestamp)
     # This proves knowledge of the secret without revealing it
-    proof_hash = hash(commitment.commitment_hash <> secret <> nonce)
+    proof_input =
+      IO.iodata_to_binary([
+        @domain_proof,
+        <<byte_size(commitment.commitment_hash)::32>>,
+        commitment.commitment_hash,
+        <<byte_size(secret)::32>>,
+        secret,
+        <<byte_size(nonce)::32>>,
+        nonce,
+        commitment.public_data.pod_id,
+        commitment.public_data.timestamp
+      ])
+
+    proof_hash = hash(proof_input)
 
     # Public input includes nonce for verification
     public_input = %{
@@ -105,12 +132,12 @@ defmodule Tessera.Crypto.ZK.ParticipationProof do
       # The proof is valid if it was created with knowledge of the secret
       # We verify by checking:
       # 1. The commitment hashes match
-      # 2. The proof hash has the expected length
+      # 2. The proof hash has the expected length (SHA-256 = 32 bytes)
       # 3. The nonce is present and valid
 
       with {:ok, nonce} <- Base.decode16(proof.public_input.nonce, case: :lower),
-           true <- byte_size(nonce) == 32,
-           true <- byte_size(proof.proof_hash) == 32 do
+           true <- byte_size(nonce) == @nonce_size,
+           true <- byte_size(proof.proof_hash) == @nonce_size do
         :ok
       else
         _ -> {:error, :invalid_proof}
@@ -128,7 +155,21 @@ defmodule Tessera.Crypto.ZK.ParticipationProof do
       {:error, :commitment_mismatch}
     else
       with {:ok, nonce} <- Base.decode16(proof.public_input.nonce, case: :lower) do
-        expected_proof_hash = hash(commitment.commitment_hash <> secret <> nonce)
+        # Recompute proof hash with same domain separation as generate
+        proof_input =
+          IO.iodata_to_binary([
+            @domain_proof,
+            <<byte_size(commitment.commitment_hash)::32>>,
+            commitment.commitment_hash,
+            <<byte_size(secret)::32>>,
+            secret,
+            <<byte_size(nonce)::32>>,
+            nonce,
+            commitment.public_data.pod_id,
+            commitment.public_data.timestamp
+          ])
+
+        expected_proof_hash = hash(proof_input)
 
         if secure_compare(proof.proof_hash, expected_proof_hash) do
           :ok
@@ -140,9 +181,20 @@ defmodule Tessera.Crypto.ZK.ParticipationProof do
   end
 
   @doc """
-  Aggregates multiple participation proofs.
+  Aggregates multiple participation proofs for batch verification.
 
-  Creates a single proof that demonstrates all individual proofs are valid.
+  This is a convenience wrapper that stores individual proofs together.
+  It does NOT provide cryptographic proof aggregation - each proof is
+  verified individually during `verify_aggregated/2`.
+
+  For true cryptographic aggregation (constant-size proofs), consider
+  implementing Bulletproofs or recursive SNARKs.
+
+  ## Limitations
+
+  - Storage size grows linearly with number of proofs
+  - Verification time grows linearly with number of proofs
+  - The combined hash is for identification only, not cryptographic binding
   """
   @spec aggregate([t()]) :: {:ok, t()} | {:error, term()}
   def aggregate([]), do: {:error, :empty_list}
@@ -150,13 +202,11 @@ defmodule Tessera.Crypto.ZK.ParticipationProof do
 
   def aggregate(proofs) when is_list(proofs) do
     if Enum.all?(proofs, &match?(%__MODULE__{}, &1)) do
-      # Combine proof hashes
-      combined_hash =
-        proofs
-        |> Enum.map(& &1.proof_hash)
-        |> Enum.reduce(&xor_bytes/2)
+      # Store all proofs for individual verification
+      # Note: The combined hash is for identification, not cryptographic binding
+      combined_hash = hash(Enum.map_join(proofs, & &1.proof_hash))
 
-      # Combine public inputs
+      # Combine public inputs for metadata
       combined_input = %{
         nonce: combine_nonces(proofs),
         count: length(proofs),

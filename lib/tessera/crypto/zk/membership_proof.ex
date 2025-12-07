@@ -10,10 +10,15 @@ defmodule Tessera.Crypto.ZK.MembershipProof do
   Uses a Merkle tree-based proof:
   1. Compute Merkle root of the set (public)
   2. Prove knowledge of a Merkle path from element to root
-  3. Use Fiat-Shamir for non-interactivity
+  3. Use domain-separated Fiat-Shamir for non-interactivity
 
   The verifier only sees the root and proof, learning nothing about
   which element was proven.
+
+  ## Security Notes
+
+  This implementation uses domain-separated Fiat-Shamir challenges
+  to prevent cross-protocol attacks.
   """
 
   alias Tessera.Crypto.ZK.Commitment
@@ -47,7 +52,11 @@ defmodule Tessera.Crypto.ZK.MembershipProof do
           created_at: DateTime.t()
         }
 
+  # Cryptographic constants
   @hash_algorithm :sha256
+
+  # Domain separation for Fiat-Shamir challenge
+  @domain_proof "Tessera.ZK.MembershipProof.v1"
 
   @doc """
   Generates a membership proof.
@@ -80,12 +89,18 @@ defmodule Tessera.Crypto.ZK.MembershipProof do
     {tree, root} = build_merkle_tree(set)
     {path, indices} = get_merkle_path(tree, element_index)
 
-    # Fiat-Shamir challenge
+    # Fiat-Shamir challenge with domain separation
     challenge_input =
-      commitment.commitment_hash <>
-        root <>
-        Enum.join(path) <>
+      IO.iodata_to_binary([
+        @domain_proof,
+        <<byte_size(commitment.commitment_hash)::32>>,
+        commitment.commitment_hash,
+        <<byte_size(root)::32>>,
+        root,
+        <<length(path)::32>>,
+        path,
         :erlang.list_to_binary(indices)
+      ])
 
     challenge = hash(challenge_input)
 
@@ -126,12 +141,18 @@ defmodule Tessera.Crypto.ZK.MembershipProof do
   end
 
   defp verify_proof_structure(proof, commitment) do
-    # Recompute challenge
+    # Recompute challenge with domain separation
     expected_challenge_input =
-      commitment.commitment_hash <>
-        proof.set_root <>
-        Enum.join(proof.merkle_path) <>
+      IO.iodata_to_binary([
+        @domain_proof,
+        <<byte_size(commitment.commitment_hash)::32>>,
+        commitment.commitment_hash,
+        <<byte_size(proof.set_root)::32>>,
+        proof.set_root,
+        <<length(proof.merkle_path)::32>>,
+        proof.merkle_path,
         :erlang.list_to_binary(proof.path_indices)
+      ])
 
     expected_challenge = hash(expected_challenge_input)
 
@@ -264,15 +285,21 @@ defmodule Tessera.Crypto.ZK.MembershipProof do
 
   defp get_merkle_path(tree, leaf_index) do
     # Tree is stored root-first, so reverse for bottom-up traversal
+    # levels = [leaves, parent_level, ..., root_level]
     levels = Enum.reverse(tree)
 
+    # We need to collect siblings at each level starting from leaves
+    # and going up to the level just below the root
     {path, indices, _} =
-      Enum.reduce(tl(levels), {[], [], leaf_index}, fn level, {path_acc, indices_acc, idx} ->
+      levels
+      # Drop the root level (we don't need a sibling there)
+      |> Enum.drop(-1)
+      |> Enum.reduce({[], [], leaf_index}, fn level, {path_acc, indices_acc, idx} ->
         # Determine sibling index and direction
         sibling_idx = if rem(idx, 2) == 0, do: idx + 1, else: idx - 1
         direction = if rem(idx, 2) == 0, do: 0, else: 1
 
-        # Get sibling (handle edge case where sibling doesn't exist)
+        # Get sibling from the current level (handle edge case where sibling doesn't exist)
         sibling = Enum.at(level, sibling_idx) || Enum.at(level, idx)
 
         # Parent index for next level
